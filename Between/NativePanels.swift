@@ -838,9 +838,6 @@ extension ContentView {
                 if let email {
                     moreRow(l("邮件客服","Email support")) { UIApplication.shared.open(email) }
                 }
-                if auth.account == nil {
-                    ReviewSignInRow(auth: auth, zh: zh)
-                }
                 moderationPrivacyAction
             }.padding(.horizontal,20).padding(.vertical,4)
         }.padding(.bottom,bottom+12).frame(width:width).background(Color(hex:0xfffbf9))
@@ -1777,68 +1774,5 @@ private struct TopRoundedShape:Shape {
         p.addLine(to:CGPoint(x:r.width,y:r.height))
         p.closeSubpath()
         return p
-    }
-}
-
-
-private struct ReviewSignInRow: View {
-    @ObservedObject var auth: AuthManager
-    let zh: Bool
-    @State private var isExpanded = false
-    @State private var username = ""
-    @State private var password = ""
-
-    private var title: String { zh ? "审核账号登录" : "App Review Sign-In" }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button {
-                isExpanded.toggle()
-                if !isExpanded { password = "" }
-            } label: {
-                HStack {
-                    Text(title)
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .accessibilityHidden(true)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(auth.busy)
-
-            if isExpanded {
-                TextField(zh ? "用户名" : "Username", text: $username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.username)
-                    .textFieldStyle(.roundedBorder)
-                SecureField(zh ? "密码" : "Password", text: $password)
-                    .textContentType(.password)
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    let submittedPassword = password
-                    password = ""
-                    Task { _ = await auth.signInForReview(username: username, password: submittedPassword) }
-                } label: {
-                    Text(zh ? "登录" : "Sign In")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(H5Design.ink)
-                .disabled(auth.busy || username.isEmpty || password.isEmpty)
-                if auth.busy { ProgressView() }
-                if let error = auth.errorText {
-                    Text(error).font(.footnote).foregroundStyle(.red)
-                }
-            }
-        }
-        .font(.system(size: 15))
-        .foregroundStyle(Color(hex: 0x59484b))
-        .padding(15)
-        .background(.white, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color(hex: 0xeee7e4)))
     }
 }

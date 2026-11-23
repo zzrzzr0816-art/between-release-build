@@ -253,13 +253,36 @@ final class AuthManager: ObservableObject {
         )
     }
 
-    func signInForReview(username: String, password: String) async -> Bool {
+    func signInWithPassword(username: String, password: String, register: Bool, email: String = "", code: String = "") async -> Bool {
         guard !isPreview, !busy else { return false }
-        await exchangeCredentials(
-            route: "auth/review",
-            fields: ["username": username, "password": password]
-        )
+        let name = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let route = register ? "auth/register" : (name == "halohorn-review" ? "auth/review" : "auth/password")
+        var fields = ["username": name, "password": password]
+        if register {
+            fields["email"] = email
+            fields["code"] = code
+        }
+        await exchangeCredentials(route: route, fields: fields)
         return account != nil
+    }
+
+    func sendRegistrationCode(to email: String) async -> Bool {
+        guard !busy else { return false }
+        busy = true
+        errorText = nil
+        defer { busy = false }
+        do {
+            var request = try authRequest("auth/email-code")
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(["email": email])
+            let (_, response) = try await URLSession.shared.data(for: request)
+            try validate(response, allowing: [200])
+            return true
+        } catch {
+            errorText = t("无法发送验证码，请检查邮箱或稍后重试", "Could not send a code. Check the email or try again later.")
+            return false
+        }
     }
 
     private func exchangeCredentials(route: String, fields: [String: String]) async {
@@ -273,6 +296,16 @@ final class AuthManager: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(fields)
             let (data, response) = try await URLSession.shared.data(for: request)
+            if route == "auth/register", let status = (response as? HTTPURLResponse)?.statusCode {
+                if status == 409 {
+                    errorText = t("账号已被使用", "That username is taken.")
+                    return
+                }
+                if status == 400 {
+                    errorText = t("请检查账号和密码格式", "Check the username and password format.")
+                    return
+                }
+            }
             try validate(response, allowing:[200])
             let payload = try JSONDecoder().decode(AuthResponse.self, from: data)
             guard !payload.token.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
@@ -491,6 +524,8 @@ private enum AuthFailure: Error {
 /// System Sign in with Apple control, styled to match the paper UI.
 struct AppleSignInControl: View {
     @ObservedObject var auth: AuthManager
+    @State private var showsPasswordSignIn = false
+    private var zh: Bool { UserDefaults.standard.string(forKey: "native.language") == "zh" }
 
     var body: some View {
         if auth.isPreview {
@@ -502,7 +537,25 @@ struct AppleSignInControl: View {
                     .background(.black, in: RoundedRectangle(cornerRadius: 14))
             }
         } else {
-            appleButton
+            VStack(spacing: 10) {
+                appleButton
+                Button {
+                    showsPasswordSignIn = true
+                } label: {
+                    Text(zh ? "账号密码登录" : "Sign In with Password")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(H5Design.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color(hex: 0xe7deda)))
+                }
+                .buttonStyle(.plain)
+                .disabled(auth.busy)
+            }
+            .sheet(isPresented: $showsPasswordSignIn) {
+                PasswordSignInForm(auth: auth, zh: zh)
+            }
         }
     }
 
@@ -517,5 +570,102 @@ struct AppleSignInControl: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .opacity(auth.busy ? 0.55 : 1)
         .disabled(auth.busy)
+    }
+}
+
+
+private struct PasswordSignInForm: View {
+    @ObservedObject var auth: AuthManager
+    let zh: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var username = ""
+    @State private var password = ""
+    @State private var isRegistering = false
+    @State private var email = ""
+    @State private var code = ""
+    @State private var sentEmail = ""
+
+    private func switchMode() {
+        isRegistering.toggle()
+        password = ""
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                ZStack(alignment: .leading) {
+                    Text(isRegistering ? (zh ? "注册账号" : "Create Account") : (zh ? "账号密码登录" : "Sign In with Password"))
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 44)
+                    Button {
+                        if isRegistering { switchMode() } else { dismiss() }
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(zh ? "返回" : "Back")
+                }
+                .foregroundStyle(H5Design.ink)
+                TextField(zh ? "账号" : "Username", text: $username)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.username)
+                SecureField(zh ? "密码" : "Password", text: $password)
+                    .textContentType(isRegistering ? .newPassword : .password)
+                if isRegistering {
+                    TextField(zh ? "邮箱" : "Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.emailAddress)
+                    HStack {
+                        TextField(zh ? "邮箱验证码" : "Email code", text: $code)
+                            .keyboardType(.numberPad)
+                            .textContentType(.oneTimeCode)
+                        Button(sentEmail == email && !email.isEmpty ? (zh ? "重发" : "Resend") : (zh ? "发送验证码" : "Send code")) {
+                            let address = email
+                            Task { if await auth.sendRegistrationCode(to: address) { sentEmail = address } }
+                        }
+                        .disabled(auth.busy || !email.contains("@"))
+                    }
+                }
+                Button {
+                    let submittedPassword = password
+                    password = ""
+                    Task {
+                        if await auth.signInWithPassword(username: username, password: submittedPassword, register: isRegistering, email: email, code: code) {
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    Text(isRegistering ? (zh ? "注册" : "Register") : (zh ? "登录" : "Sign In"))
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(H5Design.ink)
+                .disabled(auth.busy || username.isEmpty || password.isEmpty || (isRegistering && (email.isEmpty || code.count != 6)))
+                Button(isRegistering ? (zh ? "已有账号？返回登录" : "Back to Sign In") : (zh ? "注册账号" : "Create Account")) {
+                    switchMode()
+                }
+                .font(.footnote)
+                .disabled(auth.busy)
+                if isRegistering {
+                    Text(zh ? "账号使用 3–32 位英文、数字、下划线或连字符，密码至少 12 位。" : "Use 3–32 letters, numbers, underscores, or hyphens for your username, and at least 12 characters for your password.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if auth.busy { ProgressView() }
+                if let error = auth.errorText {
+                    Text(error).font(.footnote).foregroundStyle(.red)
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .padding(24)
+        }
     }
 }
