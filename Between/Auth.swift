@@ -247,15 +247,31 @@ final class AuthManager: ObservableObject {
     }
 
     private func exchange(identityToken: String, authorizationCode: String) async {
+        await exchangeCredentials(
+            route: "auth/apple",
+            fields: ["identity_token": identityToken, "authorization_code": authorizationCode]
+        )
+    }
+
+    func signInForReview(username: String, password: String) async -> Bool {
+        guard !isPreview, !busy else { return false }
+        await exchangeCredentials(
+            route: "auth/review",
+            fields: ["username": username, "password": password]
+        )
+        return account != nil
+    }
+
+    private func exchangeCredentials(route: String, fields: [String: String]) async {
         guard !busy else { return }
         busy = true
         errorText = nil
         defer { busy = false }
         do {
-            var request = try authRequest("auth/apple")
+            var request = try authRequest(route)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(["identity_token": identityToken, "authorization_code": authorizationCode])
+            request.httpBody = try JSONEncoder().encode(fields)
             let (data, response) = try await URLSession.shared.data(for: request)
             try validate(response, allowing:[200])
             let payload = try JSONDecoder().decode(AuthResponse.self, from: data)
@@ -267,7 +283,7 @@ final class AuthManager: ObservableObject {
             }
             persist(BetweenAccount(id: payload.user.id, nickname: payload.user.nickname, public_id: payload.user.public_id))
         } catch AuthFailure.unavailable {
-            errorText = t("Apple 登录服务暂不可用，请稍后重试", "Apple sign-in is temporarily unavailable. Try again later.")
+            errorText = t("登录服务暂不可用，请稍后重试", "Sign-in is temporarily unavailable. Try again later.")
         } catch {
             errorText = t("登录失败，请检查网络后重试", "Sign in failed. Check your connection and try again.")
         }
@@ -475,6 +491,10 @@ private enum AuthFailure: Error {
 /// System Sign in with Apple control, styled to match the paper UI.
 struct AppleSignInControl: View {
     @ObservedObject var auth: AuthManager
+    @State private var showsReviewSignIn = false
+    @State private var reviewUsername = ""
+    @State private var reviewPassword = ""
+    private var zh: Bool { UserDefaults.standard.string(forKey: "native.language") == "zh" }
 
     var body: some View {
         if auth.isPreview {
@@ -486,7 +506,28 @@ struct AppleSignInControl: View {
                     .background(.black, in: RoundedRectangle(cornerRadius: 14))
             }
         } else {
-            appleButton
+            VStack(spacing: 8) {
+                appleButton
+                Button(zh ? "审核账号登录" : "App Review Sign-In") {
+                    showsReviewSignIn = true
+                }
+                .font(.footnote)
+                .disabled(auth.busy)
+            }
+            .alert(zh ? "审核账号登录" : "App Review Sign-In", isPresented: $showsReviewSignIn) {
+                TextField(zh ? "用户名" : "Username", text: $reviewUsername)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField(zh ? "密码" : "Password", text: $reviewPassword)
+                Button(zh ? "取消" : "Cancel", role: .cancel) { reviewPassword = "" }
+                Button(zh ? "登录" : "Sign In") {
+                    let username = reviewUsername
+                    let password = reviewPassword
+                    reviewPassword = ""
+                    Task { await auth.signInForReview(username: username, password: password) }
+                }
+                .disabled(reviewUsername.isEmpty || reviewPassword.isEmpty)
+            }
         }
 
     }
