@@ -491,10 +491,6 @@ private enum AuthFailure: Error {
 /// System Sign in with Apple control, styled to match the paper UI.
 struct AppleSignInControl: View {
     @ObservedObject var auth: AuthManager
-    @State private var showsReviewSignIn = false
-    @State private var reviewUsername = ""
-    @State private var reviewPassword = ""
-    private var zh: Bool { UserDefaults.standard.string(forKey: "native.language") == "zh" }
 
     var body: some View {
         if auth.isPreview {
@@ -506,30 +502,8 @@ struct AppleSignInControl: View {
                     .background(.black, in: RoundedRectangle(cornerRadius: 14))
             }
         } else {
-            VStack(spacing: 8) {
-                appleButton
-                Button(zh ? "审核账号登录" : "App Review Sign-In") {
-                    showsReviewSignIn = true
-                }
-                .font(.footnote)
-                .disabled(auth.busy)
-            }
-            .alert(zh ? "审核账号登录" : "App Review Sign-In", isPresented: $showsReviewSignIn) {
-                TextField(zh ? "用户名" : "Username", text: $reviewUsername)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                SecureField(zh ? "密码" : "Password", text: $reviewPassword)
-                Button(zh ? "取消" : "Cancel", role: .cancel) { reviewPassword = "" }
-                Button(zh ? "登录" : "Sign In") {
-                    let username = reviewUsername
-                    let password = reviewPassword
-                    reviewPassword = ""
-                    Task { await auth.signInForReview(username: username, password: password) }
-                }
-                .disabled(reviewUsername.isEmpty || reviewPassword.isEmpty)
-            }
+            appleButton
         }
-
     }
 
     private var appleButton: some View {
