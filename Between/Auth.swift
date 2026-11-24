@@ -585,54 +585,78 @@ private struct PasswordSignInForm: View {
     @State private var code = ""
     @State private var sentEmail = ""
 
+    private let ink = Color(hex: 0x302b32)
+    private let muted = Color(hex: 0x8d7c7d)
+    private let accent = Color(hex: 0xc8786d)
+    private let errorColor = Color(hex: 0xb85657)
+
     private func switchMode() {
         isRegistering.toggle()
         password = ""
     }
 
+    private var canSubmit: Bool {
+        !auth.busy && !username.isEmpty && !password.isEmpty
+            && (!isRegistering || (!email.isEmpty && code.count == 6))
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 12) {
-                ZStack(alignment: .leading) {
-                    Text(isRegistering ? (zh ? "注册账号" : "Create Account") : (zh ? "账号密码登录" : "Sign In with Password"))
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 44)
-                    Button {
-                        if isRegistering { switchMode() } else { dismiss() }
-                    } label: {
-                        Image(systemName: "chevron.backward")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(zh ? "返回" : "Back")
-                }
-                .foregroundStyle(H5Design.ink)
-                TextField(zh ? "账号" : "Username", text: $username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.username)
-                SecureField(zh ? "密码" : "Password", text: $password)
-                    .textContentType(isRegistering ? .newPassword : .password)
-                if isRegistering {
-                    TextField(zh ? "邮箱" : "Email", text: $email)
-                        .keyboardType(.emailAddress)
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Text(isRegistering
+                     ? (zh ? "注册后即可发布、回复和收藏。" : "Create an account to post, reply, and save.")
+                     : (zh ? "用账号和密码登录 HaloHorn。" : "Sign in to HaloHorn with your account."))
+                    .font(.system(size: 12))
+                    .foregroundColor(muted)
+                    .padding(.top, 2)
+
+                VStack(spacing: 12) {
+                    TextField("", text: $username, prompt: prompt(zh ? "账号" : "Username"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .textContentType(.emailAddress)
-                    HStack {
-                        TextField(zh ? "邮箱验证码" : "Email code", text: $code)
-                            .keyboardType(.numberPad)
-                            .textContentType(.oneTimeCode)
-                        Button(sentEmail == email && !email.isEmpty ? (zh ? "重发" : "Resend") : (zh ? "发送验证码" : "Send code")) {
-                            let address = email
-                            Task { if await auth.sendRegistrationCode(to: address) { sentEmail = address } }
+                        .textContentType(.username)
+                        .authFieldChrome()
+
+                    SecureField("", text: $password, prompt: prompt(zh ? "密码" : "Password"))
+                        .textContentType(isRegistering ? .newPassword : .password)
+                        .authFieldChrome()
+
+                    if isRegistering {
+                        TextField("", text: $email, prompt: prompt(zh ? "邮箱" : "Email"))
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textContentType(.emailAddress)
+                            .authFieldChrome()
+
+                        HStack(spacing: 10) {
+                            TextField("", text: $code, prompt: prompt(zh ? "邮箱验证码" : "Email code"))
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .authFieldChrome()
+                                .onChange(of: code) { value in
+                                    if value.count > 6 { code = String(value.prefix(6)) }
+                                }
+                            Button {
+                                let address = email
+                                Task { if await auth.sendRegistrationCode(to: address) { sentEmail = address } }
+                            } label: {
+                                Text(sentEmail == email && !email.isEmpty ? (zh ? "重发" : "Resend") : (zh ? "发送验证码" : "Send code"))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(accent)
+                                    .padding(.horizontal, 13)
+                                    .frame(height: 38)
+                                    .background(Color(hex: 0xf3e5df), in: Capsule())
+                            }
+                            .buttonStyle(PressScale())
+                            .disabled(auth.busy || !email.contains("@"))
+                            .opacity(auth.busy || !email.contains("@") ? 0.45 : 1)
                         }
-                        .disabled(auth.busy || !email.contains("@"))
                     }
                 }
+                .padding(.top, 22)
+
                 Button {
                     let submittedPassword = password
                     password = ""
@@ -643,29 +667,87 @@ private struct PasswordSignInForm: View {
                     }
                 } label: {
                     Text(isRegistering ? (zh ? "注册" : "Register") : (zh ? "登录" : "Sign In"))
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity, minHeight: 36)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(accent, in: RoundedRectangle(cornerRadius: 15))
+                        .opacity(canSubmit ? 1 : 0.5)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(H5Design.ink)
-                .disabled(auth.busy || username.isEmpty || password.isEmpty || (isRegistering && (email.isEmpty || code.count != 6)))
-                Button(isRegistering ? (zh ? "已有账号？返回登录" : "Back to Sign In") : (zh ? "注册账号" : "Create Account")) {
+                .buttonStyle(PressScale())
+                .disabled(!canSubmit)
+                .padding(.top, 20)
+
+                Button {
                     switchMode()
+                } label: {
+                    Text(isRegistering ? (zh ? "已有账号？返回登录" : "Back to Sign In") : (zh ? "注册账号" : "Create Account"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(muted)
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .font(.footnote)
+                .buttonStyle(PressScale())
                 .disabled(auth.busy)
+                .padding(.top, 4)
+
                 if isRegistering {
-                    Text(zh ? "账号使用 3–32 位英文、数字、下划线或连字符，密码至少 12 位。" : "Use 3–32 letters, numbers, underscores, or hyphens for your username, and at least 12 characters for your password.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Text(zh ? "账号使用 3–32 位英文、数字、下划线或连字符，密码至少 12 位。验证码 6 位，10 分钟内有效。" : "Use 3–32 letters, numbers, underscores, or hyphens for your username, at least 12 characters for your password. The 6-digit code is valid for 10 minutes.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: 0xa29490))
+                        .lineSpacing(3)
                 }
-                if auth.busy { ProgressView() }
+                if auth.busy {
+                    ProgressView().tint(accent).frame(maxWidth: .infinity).padding(.top, 12)
+                }
                 if let error = auth.errorText {
-                    Text(error).font(.footnote).foregroundStyle(.red)
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(errorColor)
+                        .padding(.top, 10)
                 }
             }
-            .textFieldStyle(.roundedBorder)
-            .padding(24)
+            .padding(.horizontal, 22)
+            .padding(.top, 10)
+            .padding(.bottom, 28)
         }
+        .background(Color(hex: 0xfffaf8).ignoresSafeArea())
+    }
+
+    private var header: some View {
+        ZStack {
+            Text(isRegistering ? (zh ? "注册账号" : "Create Account") : (zh ? "账号密码登录" : "Sign In with Password"))
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(ink)
+            HStack {
+                Button {
+                    if isRegistering { switchMode() } else { dismiss() }
+                } label: {
+                    Image(systemName: "chevron.backward")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressScale())
+                .accessibilityLabel(zh ? "返回" : "Back")
+                Spacer()
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    private func prompt(_ text: String) -> Text {
+        Text(text).font(.system(size: 16)).foregroundColor(Color(hex: 0xb3a5a0))
+    }
+}
+
+private extension View {
+    func authFieldChrome() -> some View {
+        self
+            .font(.system(size: 16))
+            .foregroundColor(Color(hex: 0x3a3038))
+            .padding(.horizontal, 14)
+            .frame(height: 50)
+            .background(Color(hex: 0xf7f1ee), in: RoundedRectangle(cornerRadius: 15))
+            .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color(hex: 0xeee4df), lineWidth: 1))
     }
 }
